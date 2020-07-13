@@ -33,6 +33,7 @@ deploy_prod:
     - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
     # Upload file
     - cp .env.production .env
+    - rm -rf .gits
     - rsync -rav ./ "$SERVER_PROD_HOST:$SERVER_PROD_PATH"
     # Change file owner
     - ssh root@"$SERVER_PROD_HOST" "chmod -R 777 $SERVER_PROD_PATH"
