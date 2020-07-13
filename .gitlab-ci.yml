@@ -15,7 +15,7 @@ cache:
 # services such as redis or postgres
 before_script:
   # Install Composer and project dependencies.
-  - php composer.phar config -g repo.packagist composer https://mirrors.aliyun.com/composer/
+#  - php composer.phar config -g repo.packagist composer https://mirrors.aliyun.com/composer/
   - php composer.phar install
 
 deploy_prod:
