@@ -21,7 +21,7 @@ before_script:
 deploy_prod:
   stage: deploy
   tags:
-    - build
+    - deploy
   only:
     - master
     - tags
