@@ -1,0 +1,5 @@
+apps:
+  - name     : 'translate-queue'
+    script   : 'php artisan queue:work --tries 3 --queue translate'
+    instances: 8
+    out_file : './storage/logs/queue/queue.log'
