@@ -1,0 +1,42 @@
+# Official framework image. Look for the different tagged releases at:
+# https://hub.docker.com/r/library/php
+image: git.losgif.com:5050/jyt/social-e-commerce-manager-backend
+
+stages:
+  - deploy
+
+# This folder is cached between builds
+# http://docs.gitlab.com/ce/ci/yaml/README.html#cache
+cache:
+  paths:
+    - vendor/
+
+# This is a basic example for a gem or script which doesn't use
+# services such as redis or postgres
+before_script:
+  # Install Composer and project dependencies.
+  - php composer.phar config -g repo.packagist composer https://mirrors.aliyun.com/composer/
+  - php composer.phar install
+
+deploy_prod:
+  stage: deploy
+  tags:
+    - deploy
+  only:
+    - master
+    - tags
+  script:
+    # Create ssh private key
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PROD_PRIVATE_KEY" >> ~/.ssh/id_dsa
+    - chmod 600 ~/.ssh/id_dsa
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+    # Upload file
+    - cp .env.production .env
+    - rsync -rav ./ "$SERVER_PROD_HOST:$SERVER_PROD_PATH"
+    # Change file owner
+    - ssh root@"$SERVER_PROD_HOST" "chmod -R 777 $SERVER_PROD_PATH"
+    # Run database migrate mission
+    - ssh root@"$SERVER_PROD_HOST" "docker exec -i php-fpm php $SERVER_PROD_PHP_FPM_PATH/artisan migrate --force"
+    # Run pm2
+    - ssh root@"$SERVER_PROD_HOST" "docker exec -i php-fpm bash -c 'cd $SERVER_PROD_PHP_FPM_PATH && pm2 restart pm2.yml'"
