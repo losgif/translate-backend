@@ -18,6 +18,9 @@ class TranslateController extends Controller
         $validator = Validator::make($request->toArray(), [
             'text' => [
                 'required'
+            ],
+            'force' => [
+                'required'
             ]
         ]);
 
@@ -31,15 +34,15 @@ class TranslateController extends Controller
         $text = strip_tags($text);
         $text = preg_replace('/([\x80-\xff]*)/i', '', $text);
 
-        $words = preg_replace('/[,.!()]/', '', $text);
+        $words = preg_replace('/[,.!?()]/', '', $text);
         $words = explode(' ', $words);
 
         $words = Collect($words);
 
         $hasTranslateText = $translation->queryRow($text);
 
-        if (isset($hasTranslateText['hits']['hits']) && !empty($hasTranslateText['hits']['hits']) && $hasTranslateText['hits']['max_score'] > count($words)) {
-            return $this->failed('已翻译过类似文章');
+        if (isset($hasTranslateText['hits']['hits']) && !empty($hasTranslateText['hits']['hits']) && $hasTranslateText['hits']['max_score'] > count($words) && $request->input('force')) {
+            return $this->failed('已翻译过类似文章', 403);
         }
 
         if ($words->isEmpty()) {
@@ -74,18 +77,12 @@ class TranslateController extends Controller
 
                 if ($source['voice'] === '' || $source['phonetic'] === '' || $source['english_chinese_interpretation'] === '') {
                     unset($words[$index]);
-                    continue;
                 }
 
                 $wordDetails[] = $source;
                 unset($words[$index]);
-            }
-        }
-
-        if ($words->count() !== 0) {
-            $htmlResult = $this->multiRequest($words, 'http://dict.kekenet.com/en/');
-
-            foreach ($htmlResult as $index => $html) {
+            } else {
+                $html = file_get_contents('http://dict.kekenet.com/en/' . $words[$index]);
                 $encoding = mb_detect_encoding($html, array("ASCII", "GB2312", "GBK", 'BIG5', "UTF-8"));
                 $html = iconv($encoding, "UTF-8//TRANSLIT", $html);
 
@@ -188,16 +185,17 @@ class TranslateController extends Controller
             $translation = new Translation();
 
             $text = $request->input('original_text');
-            $text = preg_replace('/([\x80-\xff]*)/i', '', $text);
+            $text = strip_tags($text);
+            $translationText = preg_replace('/([\x80-\xff]*)/i', '', $text);
 
-            $translation->insertRow($text, $request->ip(), $request->userAgent());
+            $translation->insertRow($translationText, $request->ip(), $request->userAgent());
 
             $translationGenerate = new TranslationGenerate();
             $translationGenerate->words = $request->input('words');
             $translationGenerate->name = $request->input('name');
             $translationGenerate->desc = $request->input('desc');
             $translationGenerate->image = $request->input('image');
-            $translationGenerate->original_text = $request->input('original_text');
+            $translationGenerate->original_text = $text;
 
             $translationGenerate->save();
 
@@ -219,53 +217,5 @@ class TranslateController extends Controller
         } catch (Throwable $e) {
             return $this->failed($e->getMessage());
         }
-    }
-
-    /**
-     * @param $urls
-     * @param $baseUrl
-     * @return array
-     */
-    protected function multiRequest($urls, $baseUrl): array
-    {
-        $mh = curl_multi_init();
-        $urlHandlers = [];
-        $urlData = [];
-        // 初始化多个请求句柄为一个
-        foreach ($urls as $value) {
-            $ch = curl_init();
-            $url = $baseUrl . $value;
-            $url .= strpos($url, '?') ? '&' : '?';
-            curl_setopt($ch, CURLOPT_URL, $url);
-            // 设置数据通过字符串返回，而不是直接输出
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-            $urlHandlers[] = $ch;
-            curl_multi_add_handle($mh, $ch);
-        }
-        $active = null;
-        // 检测操作的初始状态是否OK，CURLM_CALL_MULTI_PERFORM为常量值-1
-        do {
-            // 返回的$active是活跃连接的数量，$mrc是返回值，正常为0，异常为-1
-            $mrc = curl_multi_exec($mh, $active);
-        } while ($mrc === CURLM_CALL_MULTI_PERFORM);
-        // 如果还有活动的请求，同时操作状态OK，CURLM_OK为常量值0
-        while ($active && $mrc === CURLM_OK) {
-            // 持续查询状态并不利于处理任务，每50ms检查一次，此时释放CPU，降低机器负载
-            usleep(50000);
-            // 如果批处理句柄OK，重复检查操作状态直至OK。select返回值异常时为-1，正常为1（因为只有1个批处理句柄）
-            if (curl_multi_select($mh) !== -1) {
-                do {
-                    $mrc = curl_multi_exec($mh, $active);
-                } while ($mrc === CURLM_CALL_MULTI_PERFORM);
-            }
-        }
-        // 获取返回结果
-        foreach ($urlHandlers as $index => $ch) {
-            $urlData[$index] = curl_multi_getcontent($ch);
-            // 移除单个curl句柄
-            curl_multi_remove_handle($mh, $ch);
-        }
-        curl_multi_close($mh);
-        return $urlData;
     }
 }

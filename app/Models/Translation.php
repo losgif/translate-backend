@@ -36,10 +36,12 @@ class Translation extends Model
             'original_text' => $originalText
         ];
 
-        $requestIpResponse = json_decode(file_get_contents("https://api.ip.sb/geoip/{$requestIp}"), true);
-
-        if (isset($requestIpResponse['code'])) {
-            throw new RuntimeException("获取IP信息错误: " . $requestIpResponse['message']);
+        try {
+            $requestIpResponse = json_decode(file_get_contents("http://api.ip.sb/geoip/{$requestIp}"), true);
+        } catch (Throwable $e) {
+            $requestIpResponse = [
+                'code' => 500
+            ];
         }
 
         $requestIpInfo = $requestIpResponse;
