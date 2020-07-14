@@ -31,15 +31,15 @@ class TranslateController extends Controller
         $translation = new Translation();
 
         $text = $request->input('text');
-        $text = strip_tags($text);
-        $text = preg_replace('/([\x80-\xff]*)/i', '', $text);
+        $translationText = strip_tags($text);
+        $translationText = preg_replace('/([\x80-\xff]*)/i', '', $translationText);
 
-        $words = preg_replace('/[,.!?()]/', '', $text);
+        $words = preg_replace('/[,.!?()]/', '', $translationText);
         $words = explode(' ', $words);
 
         $words = Collect($words);
 
-        $hasTranslateText = $translation->queryRow($text);
+        $hasTranslateText = $translation->queryRow($translationText);
 
         if (isset($hasTranslateText['hits']['hits']) && !empty($hasTranslateText['hits']['hits']) && $hasTranslateText['hits']['max_score'] > count($words) && $request->input('force')) {
             return $this->failed('已翻译过类似文章', 403);
