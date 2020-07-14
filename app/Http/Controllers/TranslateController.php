@@ -185,8 +185,8 @@ class TranslateController extends Controller
             $translation = new Translation();
 
             $text = $request->input('original_text');
-            $text = strip_tags($text);
-            $translationText = preg_replace('/([\x80-\xff]*)/i', '', $text);
+            $translationText = strip_tags($text);
+            $translationText = preg_replace('/([\x80-\xff]*)/i', '', $translationText);
 
             $translation->insertRow($translationText, $request->ip(), $request->userAgent());
 
