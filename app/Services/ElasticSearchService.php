@@ -241,6 +241,7 @@ class ElasticSearchService
         $parameters = [
             'index' => 'translation',
             'body' => [
+                'analyzer' => 'stop',
                 'text' => $text
             ]
         ];

@@ -8,7 +8,10 @@ use App\Models\TranslationGenerate;
 use App\Models\Word;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Validator;
+use RuntimeException;
+use SebastianBergmann\CodeCoverage\TestFixture\C;
 use Throwable;
 
 class TranslateController extends Controller
@@ -32,18 +35,34 @@ class TranslateController extends Controller
 
         $text = $request->input('text');
         $translationText = strip_tags($text);
-        $translationText = preg_replace('/([\x80-\xff]*)/i', '', $translationText);
 
-        $words = preg_replace('/[,.!?()]/', '', $translationText);
-        $words = explode(' ', $words);
+        $translationTextLen = strlen($translationText);
 
-        $words = Collect($words);
+        if ($translationTextLen >= 1024) {
+            $translationTextArray = explode('&nbsp;', $translationText);
 
-        $hasTranslateText = $translation->queryRow($translationText);
+            $words = new Collection();
 
-        if (isset($hasTranslateText['hits']['hits']) && !empty($hasTranslateText['hits']['hits']) && $hasTranslateText['hits']['max_score'] > count($words) && $request->input('force')) {
-            return $this->failed('已翻译过类似文章', 403);
+            foreach ($translationTextArray as $translationTextItem) {
+                $words = $words->merge($translation->analyze($translationTextItem));
+
+                $hasTranslateText = $translation->queryRow($translationTextItem);
+
+                if (isset($hasTranslateText['hits']['hits']) && !empty($hasTranslateText['hits']['hits']) && $hasTranslateText['hits']['max_score'] > count($words) && $request->input('force')) {
+                    return $this->failed('已翻译过类似文章', 403);
+                }
+            }
+        } else {
+            $words = new Collection($translation->analyze($translationText));
+
+            $hasTranslateText = $translation->queryRow($translationText);
+
+            if (isset($hasTranslateText['hits']['hits']) && !empty($hasTranslateText['hits']['hits']) && $hasTranslateText['hits']['max_score'] > count($words) && $request->input('force')) {
+                return $this->failed('已翻译过类似文章', 403);
+            }
         }
+
+        $words = $words->pluck('token');
 
         if ($words->isEmpty()) {
             return $this->failed('没有查询到单词');
@@ -75,48 +94,21 @@ class TranslateController extends Controller
             if (isset($wordResult['hits']['hits']) && !empty($wordResult['hits']['hits'])) {
                 $source = $wordResult['hits']['hits'][0]['_source'];
 
-                if ($source['voice'] === '' || $source['phonetic'] === '' || $source['english_chinese_interpretation'] === '') {
-                    unset($words[$index]);
+                if ($source['voice'] === '' && $source['phonetic'] === '' && $source['english_chinese_interpretation'] === "") {
+                    try {
+                        $wordDetails[] = $this->queryWordForNetWork($wordModel, $words[$index]);
+                    } catch (Throwable $e) {
+                        continue;
+                    }
                 }
 
                 $wordDetails[] = $source;
-                unset($words[$index]);
             } else {
-                $html = file_get_contents('http://dict.kekenet.com/en/' . $words[$index]);
-                $encoding = mb_detect_encoding($html, array("ASCII", "GB2312", "GBK", 'BIG5', "UTF-8"));
-                $html = iconv($encoding, "UTF-8//TRANSLIT", $html);
-
-                preg_match_all('/<input name="q" type="text" class="send" value="(.*?)" \/>/s', $html, $wordMatchResult);
-                preg_match_all('/<div class="titWord">.*?<span style="font-size:16px;margin-right:5px;" class="phn">(.*?)<\/span>/s', $html, $phoneticMatchResult);
-                preg_match_all('/<div class="titWord">.*?<a title="点击发音" onclick="asplay_h5\(\'(.*?)\'\);return false;" href="javascript:;">.*?<\/a>/us', $html, $voiceMatchResult);
-                preg_match_all('/<h1 class="s_column">英汉解释<\/h1>.*?<ul class="s_ul">(.*?)<\/ul>/us', $html, $englishChineseInterpretationMatchResult);
-                preg_match_all('/<h1 class="s_column">同义词<\/h1>.*?<ul class="s_ul">(.*?)<\/ul>/us', $html, $synonymsMatchResult);
-                preg_match_all('/<h1 class="s_column">反义词<\/h1>.*?<ul class="s_ul">(.*?)<\/ul>/us', $html, $antonymsMatchResult);
-                preg_match_all('/<h1 class="s_column">词汇辨析<\/h1>.*?<ul class="s_ul">(.*?)<\/ul>.*?<div style="line-height:180%">(.*?)<\/div>/us', $html, $vocabularyAnalysisMatchResult);
-                preg_match_all('/<h1 class="s_column">参考例句<\/h1>.*?<ul id="s_ul">(.*?)<\/ul>/us', $html, $referenceExampleSentencesMatchResult);
-                preg_match_all('/<h1 class="s_column">英英解释<\/h1>.*?<ol class="s_ul">(.*?)<\/ol>/us', $html, $englishInterpretationMatchResult);
-                preg_match_all('/<h1 class="s_column">网络释义<\/h1>.*?<ul class="s_ul">(.*?)<\/ul>/us', $html, $webDefinitionsMatchResult);
-                preg_match_all('/<h1 class="t_c_column">相关参考<\/h1>.*?<ul class="s_ul">(.*?)<\/ul>/us', $html, $relatedReferenceMatchResult);
-
-                if (!isset($wordMatchResult[1][0], $phoneticMatchResult[1][0], $englishChineseInterpretationMatchResult[1][0])) {
+                try {
+                    $wordDetails[] = $this->queryWordForNetWork($wordModel, $words[$index]);
+                } catch (Throwable $e) {
                     continue;
                 }
-
-                $wordSaveData['word'] = $wordMatchResult[1][0];
-                $wordSaveData['phonetic'] = $phoneticMatchResult[1][0] ?? '';
-                $wordSaveData['voice'] = $voiceMatchResult[1][0] ?? '';
-                $wordSaveData['english_chinese_interpretation'] = $englishChineseInterpretationMatchResult[1][0] ?? '';
-                $wordSaveData['synonyms'] = $synonymsMatchResult[1][0] ?? '';
-                $wordSaveData['antonyms'] = $antonymsMatchResult[1][0] ?? '';
-                $wordSaveData['vocabulary_analysis'] = '<span class="vocabulary-analysis">' . ($vocabularyAnalysisMatchResult[1][0] ?? '') . '</span><br>' . ($vocabularyAnalysisMatchResult[2][0] ?? '');
-                $wordSaveData['reference_example_sentences'] = $referenceExampleSentencesMatchResult[1][0] ?? '';
-                $wordSaveData['english_interpretation'] = $englishInterpretationMatchResult[1][0] ?? '';
-                $wordSaveData['web_definitions'] = $webDefinitionsMatchResult[1][0] ?? '';
-                $wordSaveData['related_reference'] = $relatedReferenceMatchResult[1][0] ?? '';
-
-                $wordModel->insertRow($wordSaveData);
-
-                $wordDetails[] = $wordSaveData;
             }
         }
 
@@ -124,6 +116,67 @@ class TranslateController extends Controller
             'words' => $wordDetails,
             'text' => $text
         ]);
+    }
+
+    /**
+     * 通过网络获取单词详细释义
+     *
+     * @param Word $wordModel
+     * @param String $word
+     * @return Word
+     */
+    public function queryWordForNetWork(Word $wordModel, String $word): Word
+    {
+        $html = file_get_contents('http://dict.kekenet.com/en/' . $word);
+        $encoding = mb_detect_encoding($html, array("ASCII", "GB2312", "GBK", 'BIG5', "UTF-8"));
+
+        if (!$html) {
+            throw new RuntimeException('网页抓取为空');
+        }
+
+        try {
+            if ($encoding !== 'UTF-8') {
+                $html = iconv('GB18030', "UTF-8//TRANSLIT", $html);
+            }
+        } catch (Throwable $e) {
+            throw new RuntimeException('网页转码失败');
+        }
+
+        preg_match_all('/<input name="q" type="text" class="send" value="(.*?)" \/>/s', $html, $wordMatchResult);
+        preg_match_all('/<div class="titWord">.*?<span style="font-size:16px;margin-right:5px;" class="phn">(.*?)<\/span>/s', $html, $phoneticMatchResult);
+        preg_match_all('/<div class="titWord">.*?<a title="点击发音" onclick="asplay_h5\(\'(.*?)\'\);return false;" href="javascript:;">.*?<\/a>/us', $html, $voiceMatchResult);
+        preg_match_all('/<h1 class="s_column">英汉解释<\/h1>.*?<ul class="s_ul">(.*?)<\/ul>/us', $html, $englishChineseInterpretationMatchResult);
+        preg_match_all('/<h1 class="s_column">同义词<\/h1>.*?<ul class="s_ul">(.*?)<\/ul>/us', $html, $synonymsMatchResult);
+        preg_match_all('/<h1 class="s_column">反义词<\/h1>.*?<ul class="s_ul">(.*?)<\/ul>/us', $html, $antonymsMatchResult);
+        preg_match_all('/<h1 class="s_column">词汇辨析<\/h1>.*?<ul class="s_ul">(.*?)<\/ul>.*?<div style="line-height:180%">(.*?)<\/div>/us', $html, $vocabularyAnalysisMatchResult);
+        preg_match_all('/<h1 class="s_column">参考例句<\/h1>.*?<ul id="s_ul">(.*?)<\/ul>/us', $html, $referenceExampleSentencesMatchResult);
+        preg_match_all('/<h1 class="s_column">英英解释<\/h1>.*?<ol class="s_ul">(.*?)<\/ol>/us', $html, $englishInterpretationMatchResult);
+        preg_match_all('/<h1 class="s_column">网络释义<\/h1>.*?<ul class="s_ul">(.*?)<\/ul>/us', $html, $webDefinitionsMatchResult);
+        preg_match_all('/<h1 class="t_c_column">相关参考<\/h1>.*?<ul class="s_ul">(.*?)<\/ul>/us', $html, $relatedReferenceMatchResult);
+
+        if (!isset($wordMatchResult[1][0])) {
+            throw new RuntimeException('网页抓取单词失败');
+        }
+
+        $wordSaveData['word'] = $word;
+        $wordSaveData['phonetic'] = $phoneticMatchResult[1][0] ?? '';
+        $wordSaveData['voice'] = $voiceMatchResult[1][0] ?? '';
+        $wordSaveData['english_chinese_interpretation'] = $englishChineseInterpretationMatchResult[1][0] ?? '';
+        $wordSaveData['synonyms'] = $synonymsMatchResult[1][0] ?? '';
+        $wordSaveData['antonyms'] = $antonymsMatchResult[1][0] ?? '';
+        $wordSaveData['vocabulary_analysis'] = '<span class="vocabulary-analysis">' . ($vocabularyAnalysisMatchResult[1][0] ?? '') . '</span><br>' . ($vocabularyAnalysisMatchResult[2][0] ?? '');
+        $wordSaveData['reference_example_sentences'] = $referenceExampleSentencesMatchResult[1][0] ?? '';
+        $wordSaveData['english_interpretation'] = $englishInterpretationMatchResult[1][0] ?? '';
+        $wordSaveData['web_definitions'] = $webDefinitionsMatchResult[1][0] ?? '';
+        $wordSaveData['related_reference'] = $relatedReferenceMatchResult[1][0] ?? '';
+
+        if ($wordSaveData['voice'] === '' && $wordSaveData['phonetic'] === '' && $wordSaveData['english_chinese_interpretation'] === "") {
+            throw new RuntimeException('网页抓取所有必要数据为空');
+        }
+
+        $wordModel->insertRow($wordSaveData);
+
+        return $wordModel;
     }
 
     /**
