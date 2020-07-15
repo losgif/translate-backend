@@ -49,7 +49,7 @@ class TranslateController extends Controller
                 $hasTranslateText = $translation->queryRow($translationTextItem);
 
                 if (isset($hasTranslateText['hits']['hits']) && !empty($hasTranslateText['hits']['hits']) && $hasTranslateText['hits']['max_score'] > count($words) && $request->input('force')) {
-                    return $this->failed('已翻译过类似文章', 403);
+                    return $this->failed('已翻译过类似文章,是否继续操作？', 403);
                 }
             }
         } else {
@@ -58,7 +58,7 @@ class TranslateController extends Controller
             $hasTranslateText = $translation->queryRow($translationText);
 
             if (isset($hasTranslateText['hits']['hits']) && !empty($hasTranslateText['hits']['hits']) && $hasTranslateText['hits']['max_score'] > count($words) && $request->input('force')) {
-                return $this->failed('已翻译过类似文章', 403);
+                return $this->failed('已翻译过类似文章,是否继续操作？', 403);
             }
         }
 
